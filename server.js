@@ -1,3 +1,7 @@
+
+if (process.env.NODE_ENV === 'test') {
+  console.log('Modo pruebas activado');
+}
 'use strict';
 require('dotenv').config();
 const express = require('express');

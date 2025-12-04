@@ -4,7 +4,10 @@
 	"description": "InfoSec project for freeCodeCamp",
 	"scripts": {
 		"start": "node server.js",
-		"test": "set NODE_ENV=test && mocha"
+  		"test": "mocha tests"
+		
+
+
 	},
 	"dependencies": {
 		"body-parser": "^1.15.2",
