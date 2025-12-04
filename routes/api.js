@@ -1,13 +1,24 @@
 'use strict';
-const Stock = require('../models/stock');   // ← Esta línea es OBLIGATORIA
+
+let Stock;  // ← Variable para el modelo (se carga solo si DB conecta)
+let dbConnected = false;
 
 module.exports = function (app) {
+  // Intentamos cargar el modelo solo si Mongo está disponible
+  try {
+    Stock = require('../models/stock');
+    dbConnected = true;
+    console.log('Modelo Stock cargado correctamente');
+  } catch (err) {
+    console.log('No se pudo cargar modelo Stock, usando fallback en memoria');
+    dbConnected = false;
+  }
 
   app.get('/api/stock-prices', async (req, res) => {
     const { stock, like } = req.query;
     let stocks = [];
 
-    // Normalizar el parámetro stock
+    // Normalizar stock
     if (typeof stock === 'string') {
       stocks = [stock.toUpperCase()];
     } else if (Array.isArray(stock)) {
@@ -18,37 +29,60 @@ module.exports = function (app) {
 
     const ip = req.ip || req.connection?.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
 
-    try {
-      // Función para obtener o crear un stock en MongoDB
-      const processStock = async (symbol) => {
-        let stockDoc = await Stock.findOne({ stock: symbol });
+    // Fallback en memoria si DB falla
+    const likesMap = new Map();  // stock → likes
+    const ipLikes = new Map();   // ip+stock → true
 
-        if (!stockDoc) {
-          stockDoc = new Stock({
+    const processStock = async (symbol) => {
+      if (dbConnected && Stock) {
+        try {
+          let stockDoc = await Stock.findOne({ stock: symbol });
+          if (!stockDoc) {
+            stockDoc = new Stock({ stock: symbol, likes: 0, ipLikes: [] });
+          }
+
+          if (like === 'true' && !stockDoc.ipLikes.includes(ip)) {
+            stockDoc.likes += 1;
+            stockDoc.ipLikes.push(ip);
+            await stockDoc.save();
+          }
+
+          return {
             stock: symbol,
-            likes: 0,
-            ipLikes: []
-          });
+            price: Number((Math.random() * 100 + 50).toFixed(2)),
+            likes: stockDoc.likes
+          };
+        } catch (dbErr) {
+          console.error('DB error, cayendo a fallback:', dbErr.message);
+          // Fallback a memoria
+          return processFallback(symbol);
         }
+      } else {
+        // Fallback directo
+        return processFallback(symbol);
+      }
+    };
 
-        // Si hay like y la IP no ha dado like antes → sumamos
-        if (like === 'true' && !stockDoc.ipLikes.includes(ip)) {
-          stockDoc.likes += 1;
-          stockDoc.ipLikes.push(ip);
-          await stockDoc.save();
-        }
+    const processFallback = (symbol) => {
+      const key = ip + symbol;
+      let currentLikes = likesMap.get(symbol) || 0;
 
-        return {
-          stock: symbol,
-          price: Number((Math.random() * 100 + 50).toFixed(2)), // precio simulado
-          likes: stockDoc.likes
-        };
+      if (like === 'true' && !ipLikes.has(key)) {
+        currentLikes++;
+        likesMap.set(symbol, currentLikes);
+        ipLikes.set(key, true);
+      }
+
+      return {
+        stock: symbol,
+        price: Number((Math.random() * 100 + 50).toFixed(2)),
+        likes: currentLikes
       };
+    };
 
-      // Procesamos todos los stocks (1 o 2)
+    try {
       const results = await Promise.all(stocks.map(processStock));
 
-      // Respuesta según cantidad de stocks
       if (results.length === 1) {
         res.json({
           stockData: {
@@ -69,9 +103,8 @@ module.exports = function (app) {
         });
       }
     } catch (err) {
-      console.error(err);
+      console.error('Error general:', err);
       res.json({ error: 'Error processing stock data' });
     }
   });
-
 };
