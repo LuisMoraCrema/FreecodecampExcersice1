@@ -4,6 +4,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const mongoose = require('mongoose');
+const helmet = require('helmet');        // ← ESTA LÍNEA TIENE QUE ESTAR
 
 const apiRoutes = require('./routes/api.js');
 const fccTestingRoutes = require('./routes/fcctesting.js');
@@ -15,7 +16,7 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],   // necesario por el inline CSS de FCC
+      styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:"],
     }
   }
