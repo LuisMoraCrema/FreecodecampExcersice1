@@ -1,6 +1,5 @@
 'use strict';
-//const Stock = require('../models').Stock;   // ← si usabas modelo, lo dejamos por si acaso
-// (si no tienes models, esta línea no hace daño)
+const Stock = require('../models/stock');   // ← Esta línea es OBLIGATORIA
 
 module.exports = function (app) {
 
@@ -8,7 +7,7 @@ module.exports = function (app) {
     const { stock, like } = req.query;
     let stocks = [];
 
-    // Normalizar el parámetro stock (puede venir como string o array)
+    // Normalizar el parámetro stock
     if (typeof stock === 'string') {
       stocks = [stock.toUpperCase()];
     } else if (Array.isArray(stock)) {
@@ -17,47 +16,61 @@ module.exports = function (app) {
       return res.json({ error: 'Stock parameter missing' });
     }
 
-    // Simulación de likes (una "base de datos" en memoria)
-    const likesMap = new Map();   // stock -> número de likes
-    const ipLikes = new Map();    // ip+stock -> ya dio like
+    const ip = req.ip || req.connection?.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
 
-    const ip = req.ip || 'test-ip';
+    try {
+      // Función para obtener o crear un stock en MongoDB
+      const processStock = async (symbol) => {
+        let stockDoc = await Stock.findOne({ stock: symbol });
 
-    const results = stocks.map(symbol => {
-      const key = ip + symbol;
-      let currentLikes = likesMap.get(symbol) || 0;
-
-      if (like === 'true' && !ipLikes.has(key)) {
-        currentLikes++;
-        likesMap.set(symbol, currentLikes);
-        ipLikes.set(key, true);
-      }
-
-      return {
-        stock: symbol,
-        price: Number((Math.random() * 100 + 50).toFixed(2)),
-        likes: currentLikes
-      };
-    });
-
-    if (results.length === 1) {
-      res.json({
-        stockData: {
-          stock: results[0].stock,
-          price: results[0].price,
-          likes: results[0].likes
+        if (!stockDoc) {
+          stockDoc = new Stock({
+            stock: symbol,
+            likes: 0,
+            ipLikes: []
+          });
         }
-      });
-    } else {
-      const diff1 = results[0].likes - results[1].likes;
-      const diff2 = results[1].likes - results[0].likes;
 
-      res.json({
-        stockData: [
-          { stock: results[0].stock, price: results[0].price, rel_likes: diff1 },
-          { stock: results[1].stock, price: results[1].price, rel_likes: diff2 }
-        ]
-      });
+        // Si hay like y la IP no ha dado like antes → sumamos
+        if (like === 'true' && !stockDoc.ipLikes.includes(ip)) {
+          stockDoc.likes += 1;
+          stockDoc.ipLikes.push(ip);
+          await stockDoc.save();
+        }
+
+        return {
+          stock: symbol,
+          price: Number((Math.random() * 100 + 50).toFixed(2)), // precio simulado
+          likes: stockDoc.likes
+        };
+      };
+
+      // Procesamos todos los stocks (1 o 2)
+      const results = await Promise.all(stocks.map(processStock));
+
+      // Respuesta según cantidad de stocks
+      if (results.length === 1) {
+        res.json({
+          stockData: {
+            stock: results[0].stock,
+            price: results[0].price,
+            likes: results[0].likes
+          }
+        });
+      } else {
+        const rel_likes1 = results[0].likes - results[1].likes;
+        const rel_likes2 = results[1].likes - results[0].likes;
+
+        res.json({
+          stockData: [
+            { stock: results[0].stock, price: results[0].price, rel_likes: rel_likes1 },
+            { stock: results[1].stock, price: results[1].price, rel_likes: rel_likes2 }
+          ]
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      res.json({ error: 'Error processing stock data' });
     }
   });
 
