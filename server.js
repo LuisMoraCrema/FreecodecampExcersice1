@@ -10,7 +10,16 @@ const fccTestingRoutes = require('./routes/fcctesting.js');
 const runner = require('./test-runner');
 
 const app = express();
-
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],   // necesario por el inline CSS de FCC
+      imgSrc: ["'self'", "data:"],
+    }
+  }
+}));
 app.use('/public', express.static(process.cwd() + '/public'));
 app.use(cors({ origin: '*' }));
 app.use(bodyParser.json());
