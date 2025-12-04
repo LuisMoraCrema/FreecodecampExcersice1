@@ -1,63 +1,106 @@
 'use strict';
+const fetch = global.fetch || require('node-fetch');
+const mongoose = require('mongoose');
+
+// Modelo de Stock
+const stockSchema = new mongoose.Schema({
+  stock: { type: String, required: true, uppercase: true, unique: true },
+  likes: { type: Number, default: 0 },
+  ips: [String] // IPs anonimizadas
+});
+const Stock = mongoose.model('Stock', stockSchema);
 
 module.exports = function (app) {
 
-  // Mapas en memoria para likes (se resetean por request, pero para tests de FCC basta)
-  const likesMap = new Map();  // stock → likes
-  const ipLikes = new Map();   // ip + stock → true (evita dobles likes)
+  app.route('/api/stock-prices')
+    .get(async function (req, res) {
+      try {
+        let { stock, like } = req.query;
+        const likeFlag = like === 'true' || like === true;
 
-  app.get('/api/stock-prices', (req, res) => {
-    const { stock, like } = req.query;
-    let stocks = [];
+        // IP del cliente
+        const ip = req.ip || req.connection?.remoteAddress || '::1';
 
-    // Normalizar stock
-    if (typeof stock === 'string') {
-      stocks = [stock.toUpperCase()];
-    } else if (Array.isArray(stock)) {
-      stocks = stock.map(s => s.toUpperCase());
-    } else {
-      return res.json({ error: 'Stock parameter missing' });
-    }
+        // ========== NORMALIZAR stock ==========
+        let stocks = [];
 
-    const ip = req.ip || req.connection?.remoteAddress || req.headers['x-forwarded-for'] || 'test-ip';
-
-    const results = stocks.map(symbol => {
-      const key = ip + symbol;
-      let currentLikes = likesMap.get(symbol) || 0;
-
-      if (like === 'true' && !ipLikes.has(key)) {
-        currentLikes += 1;
-        likesMap.set(symbol, currentLikes);
-        ipLikes.set(key, true);
-      }
-
-      return {
-        stock: symbol,
-        price: Number((Math.random() * 100 + 50).toFixed(2)),
-        likes: currentLikes
-      };
-    });
-
-    // Respuesta según cantidad
-    if (results.length === 1) {
-      res.json({
-        stockData: {
-          stock: results[0].stock,
-          price: results[0].price,
-          likes: results[0].likes
+        if (typeof stock === 'string' && stock.includes(',')) {
+          stocks = stock.split(',').map(s => s.trim().toUpperCase());
+        } else if (typeof stock === 'string') {
+          stocks = [stock.toUpperCase()];
+        } else if (Array.isArray(stock)) {
+          stocks = stock.map(s => s.toUpperCase());
+        } else {
+          return res.json({ error: 'No stock provided' });
         }
-      });
-    } else {
-      const rel_likes1 = results[0].likes - results[1].likes;
-      const rel_likes2 = results[1].likes - results[0].likes;
 
-      res.json({
-        stockData: [
-          { stock: results[0].stock, price: results[0].price, rel_likes: rel_likes1 },
-          { stock: results[1].stock, price: results[1].price, rel_likes: rel_likes2 }
-        ]
-      });
-    }
-  });
+        if (stocks.length === 0 || stocks.length > 2) {
+          return res.json({ error: 'Invalid stock parameter' });
+        }
 
+        const results = [];
+
+        for (const symbol of stocks) {
+          // 1. Precio real del proxy oficial de freeCodeCamp
+          const response = await fetch(
+            `https://stock-price-checker-proxy.freecodecamp.rocks/v1/stock/${symbol}/quote`
+          );
+          const data = await response.json();
+
+          if (!data?.latestPrice) {
+            return res.json({ error: 'Invalid symbol or API error' });
+          }
+
+          // 2. Buscar/crear en MongoDB
+          let stockDoc = await Stock.findOne({ stock: symbol });
+          if (!stockDoc) {
+            stockDoc = new Stock({ stock: symbol });
+          }
+
+          // 3. Likes + anonimato IP
+          if (likeFlag) {
+            const anonIp = ip.includes(':') 
+              ? ip.split(':').slice(0, 3).join(':') + ':0' 
+              : ip.split('.').slice(0, 3).join('.') + '.0';
+
+            if (!stockDoc.ips.includes(anonIp)) {
+              stockDoc.likes += 1;
+              stockDoc.ips.push(anonIp);
+              await stockDoc.save();
+            }
+          }
+
+          results.push({
+            stock: symbol,
+            price: data.latestPrice,
+            likes: stockDoc.likes
+          });
+        }
+
+        // ========== RESPUESTA FINAL ==========
+        if (results.length === 1) {
+          res.json({
+            stockData: {
+              stock: results[0].stock,
+              price: results[0].price,
+              likes: results[0].likes
+            }
+          });
+        } else {
+          const rel1 = results[0].likes - results[1].likes;
+          const rel2 = results[1].likes - results[0].likes;
+
+          res.json({
+            stockData: [
+              { stock: results[0].stock, price: results[0].price, rel_likes: rel1 },
+              { stock: results[1].stock, price: results[1].price, rel_likes: rel2 }
+            ]
+          });
+        }
+
+      } catch (err) {
+        console.error('Error:', err);
+        res.json({ error: 'Server error' });
+      }
+    });
 };

@@ -57,7 +57,7 @@ suite('Functional Tests', function () {
     test('4. Viewing two stocks', function (done) {
       chai.request(server)
         .get('/api/stock-prices')
-        .query({ stock: ['MSFT', 'AMZN'] })
+        .query({ stock: 'MSFT,AMZN' })  // ← CAMBIO: cadena con coma
         .end(function (err, res) {
           assert.equal(res.status, 200);
           assert.isArray(res.body.stockData);
@@ -71,12 +71,17 @@ suite('Functional Tests', function () {
     test('5. Viewing two stocks and liking them', function (done) {
       chai.request(server)
         .get('/api/stock-prices')
-        .query({ stock: ['TSLA', 'NFLX'], like: true })
+        .query({ stock: 'TSLA,NFLX', like: true })  // ← CAMBIO: cadena con coma + like=true
         .end(function (err, res) {
           assert.equal(res.status, 200);
           assert.isArray(res.body.stockData);
+          assert.equal(res.body.stockData.length, 2);
+          assert.equal(res.body.stockData[0].stock, 'TSLA');  // Orden específico: primero TSLA
+          assert.equal(res.body.stockData[1].stock, 'NFLX');  // Segundo NFLX
           assert.property(res.body.stockData[0], 'rel_likes');
           assert.property(res.body.stockData[1], 'rel_likes');
+          // Suma de rel_likes debe ser 0 (diferencia relativa)
+          assert.equal(res.body.stockData[0].rel_likes + res.body.stockData[1].rel_likes, 0);
           done();
         });
     });
